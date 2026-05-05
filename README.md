@@ -2,8 +2,6 @@
 
 Cross-family replication of [Lindsey 2026](https://arxiv.org/abs/2601.01828)'s introspective-awareness paradigm on Llama-3.1-405B-Instruct.
 
-Companion repo to the LessWrong post: **[link]** *(fill in once published)*.
-
 **Headline result:** strict introspection 0/400 trials, 0/80 false-positive controls. Identification and coherence trade off as magnitude is swept, with no overlap. See the post for the structural finding and what it narrows about Lindsey's paradigm.
 
 The canonical run's data is checked into [`results/`](results/) — clone the repo and you have everything the post tables cite.
