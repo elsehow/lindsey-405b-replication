@@ -14,9 +14,11 @@ The canonical run's data is checked into [`results/`](results/) — clone the re
 | `judge_lindsey_batch.py` | Canonical judge — Anthropic Batches API. Outputs `.judged.json` with per-trial four-criterion scores + per-cell aggregates. ~50% cheaper than serial. |
 | `judge_lindsey_sweep.py` | Serial-fallback judge (`messages.parse`). Same scoring semantics. Use when batches misbehave. |
 | `analyze_full_sweep.py` | Fast heuristic regex analyzer for inspection. The `.judged.json`'s `aggregates` field has the publication-grade scoring already. |
+| `make_figures.py` | Generate the post's charts from the judged JSON. Outputs `figures/structural_finding.png` (lead) and `figures/all_conditions.png` (robustness). |
 | `smoke_vllm_lens.py` | Smoke test for the FP8 + vllm-lens steering pipeline. Run before the sweep. |
 | `runpod-vllm-fp8.md` | RunPod 8×H100 + vLLM + FP8 infra recipe: pod config, version pins, install command, FP8 quantize snippet, vLLM serve config, gotchas, cost ballpark. Self-contained — copy-paste runnable. |
 | `results/` | The canonical run's data — raw responses, judged scores, and the love + all_caps vectors at layer 84. |
+| `figures/` | The post's charts, regenerable from the judged JSON via `make_figures.py`. |
 
 ## Quickstart
 

@@ -14,6 +14,8 @@ dependencies = [
     # Judge (Anthropic API client; runs locally or on the pod)
     "anthropic>=0.40.0",
     "pydantic>=2.0",
+    # Figures
+    "matplotlib>=3.10",
 ]
 
 [project.urls]
