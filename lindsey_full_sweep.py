@@ -1,16 +1,20 @@
 """Consolidated Lindsey-replication sweep for 405B-Instruct on vllm-lens.
 
-Single model load runs:
-  (1) mag=0 controls (40 trials, no steering applied — true baseline)
-  (2) love-vector sweep, canonical Lindsey prompt, mags [5,10,12,15,18]
-  (3) all_caps-vector sweep, same prompt, same mags
-  (4) §5.8 alternative-prompt regime ("What are you thinking about?"),
-       both concepts, same mags
-  (5) §5.8 alt-prompt controls (no steering)
+Single model load runs (per scaffold selected via CONDITIONS env):
+  - mag=0 controls (40 trials, no steering — true baseline)
+  - love-vector sweep, canonical Lindsey prompt, mags [5,10,12,15,18]
+  - all_caps-vector sweep, same prompt, same mags
+  - (optional) §5.8 alt-prompt regime ("What are you thinking about?"),
+    both concepts, same mags + alt-prompt controls
+
+CONDITIONS controls which scaffolds run:
+  CONDITIONS="lindsey,alt"  — both (default; matches the 2026-05-03 canonical run)
+  CONDITIONS="lindsey"      — canonical Lindsey paradigm only (for follow-ups)
+  CONDITIONS="alt"          — §5.8 alt prompt only
 
 All trials at temperature=1.0, top_p=1.0 (Lindsey §4 Methods Notes).
 
-Output: results/lindsey_full_<model>_<ts>.json with separate sections.
+Output: <OUT_DIR>/lindsey_full_<model>_<ts>.json
 """
 import json
 import os
@@ -36,6 +40,14 @@ N_CONTROL_TRIALS = int(os.environ.get("N_CONTROL_TRIALS", "40"))
 TEMPERATURE = float(os.environ.get("TEMPERATURE", "1.0"))
 TOP_P = float(os.environ.get("TOP_P", "1.0"))
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "200"))
+# Which scaffold(s) to run. "lindsey" = canonical paradigm only;
+# "alt" = §5.8 weaker prompt only; "lindsey,alt" = both (default).
+CONDITIONS = [
+    c.strip() for c in os.environ.get("CONDITIONS", "lindsey,alt").split(",") if c.strip()
+]
+for c in CONDITIONS:
+    if c not in ("lindsey", "alt"):
+        raise SystemExit(f"CONDITIONS values must be 'lindsey' and/or 'alt', got: {c}")
 
 TS = datetime.now().strftime("%Y%m%d_%H%M%S")
 MODEL_SHORT = os.path.basename(MODEL_PATH.rstrip("/")).replace(".", "_")
@@ -232,45 +244,47 @@ def main():
     print(f"  alt_prompt = {len(tokenizer.encode(alt_prompt_chat))} tokens")
 
     all_results = []
+    out["conditions"] = CONDITIONS
 
-    # ---- (1) Lindsey-prompt control (mag=0, no steering) -----------
-    banner(f"[1/5] Lindsey-prompt CONTROL ({N_CONTROL_TRIALS} trials, no steering)")
-    all_results += run_sweep(
-        llm, lindsey_prompt, love_vec,
-        "lindsey_control", [0.0], N_CONTROL_TRIALS, with_steering=False,
-    )
+    # ---- Lindsey scaffold (canonical paradigm) ---------------------
+    if "lindsey" in CONDITIONS:
+        banner(f"[lindsey] CONTROL ({N_CONTROL_TRIALS} trials, no steering)")
+        all_results += run_sweep(
+            llm, lindsey_prompt, love_vec,
+            "lindsey_control", [0.0], N_CONTROL_TRIALS, with_steering=False,
+        )
 
-    # ---- (2) Lindsey-prompt + love sweep ---------------------------
-    banner(f"[2/5] Lindsey-prompt × LOVE × mags {MAGNITUDES}")
-    all_results += run_sweep(
-        llm, lindsey_prompt, love_vec,
-        "lindsey_love", MAGNITUDES, N_TRIALS,
-    )
+        banner(f"[lindsey] LOVE × mags {MAGNITUDES}")
+        all_results += run_sweep(
+            llm, lindsey_prompt, love_vec,
+            "lindsey_love", MAGNITUDES, N_TRIALS,
+        )
 
-    # ---- (3) Lindsey-prompt + all_caps sweep -----------------------
-    banner(f"[3/5] Lindsey-prompt × ALL_CAPS × mags {MAGNITUDES}")
-    all_results += run_sweep(
-        llm, lindsey_prompt, caps_vec,
-        "lindsey_all_caps", MAGNITUDES, N_TRIALS,
-    )
+        banner(f"[lindsey] ALL_CAPS × mags {MAGNITUDES}")
+        all_results += run_sweep(
+            llm, lindsey_prompt, caps_vec,
+            "lindsey_all_caps", MAGNITUDES, N_TRIALS,
+        )
 
-    # ---- (4) Alt-prompt control ------------------------------------
-    banner(f"[4/5] Alt-prompt CONTROL ({N_CONTROL_TRIALS} trials, no steering)")
-    all_results += run_sweep(
-        llm, alt_prompt_chat, love_vec,
-        "alt_control", [0.0], N_CONTROL_TRIALS, with_steering=False,
-    )
+    # ---- §5.8 alt scaffold (weaker prompt; Lindsey reports lower rates) ----
+    if "alt" in CONDITIONS:
+        banner(f"[alt] CONTROL ({N_CONTROL_TRIALS} trials, no steering)")
+        all_results += run_sweep(
+            llm, alt_prompt_chat, love_vec,
+            "alt_control", [0.0], N_CONTROL_TRIALS, with_steering=False,
+        )
 
-    # ---- (5) Alt-prompt × both concepts ----------------------------
-    banner(f"[5/5] Alt-prompt × LOVE + ALL_CAPS × mags {MAGNITUDES}")
-    all_results += run_sweep(
-        llm, alt_prompt_chat, love_vec,
-        "alt_love", MAGNITUDES, N_TRIALS,
-    )
-    all_results += run_sweep(
-        llm, alt_prompt_chat, caps_vec,
-        "alt_all_caps", MAGNITUDES, N_TRIALS,
-    )
+        banner(f"[alt] LOVE × mags {MAGNITUDES}")
+        all_results += run_sweep(
+            llm, alt_prompt_chat, love_vec,
+            "alt_love", MAGNITUDES, N_TRIALS,
+        )
+
+        banner(f"[alt] ALL_CAPS × mags {MAGNITUDES}")
+        all_results += run_sweep(
+            llm, alt_prompt_chat, caps_vec,
+            "alt_all_caps", MAGNITUDES, N_TRIALS,
+        )
 
     out["results"] = all_results
     with open(OUT_PATH, "w") as f:
