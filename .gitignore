@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-vllm/
+venv/
+
+# Environment
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Run-time outputs (the canonical run is committed under results/; new runs are local)
+results/lindsey_full_*.json
+results/vector_*.pt
+results/smoke_vllm_lens_*.json
+!results/lindsey_full_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.json
+!results/lindsey_full_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.judged.json
+!results/vector_love_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
+!results/vector_all_caps_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
+*.log

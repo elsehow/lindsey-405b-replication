@@ -1,0 +1,20 @@
+[project]
+name = "lindsey-405b-replication"
+version = "0.1.0"
+description = "Cross-family replication of Lindsey 2026's introspective-awareness paradigm on Llama-3.1-405B-Instruct."
+authors = [{ name = "Nick Merrill" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Sweep + activation injection (run on the GPU pod)
+    "vllm>=0.20.0",
+    "vllm-lens>=1.1.0",
+    "torch>=2.8.0",
+    # Judge (Anthropic API client; runs locally or on the pod)
+    "anthropic>=0.40.0",
+    "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/elsehow/lindsey-405b-replication"
