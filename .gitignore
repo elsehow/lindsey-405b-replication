@@ -24,3 +24,7 @@ results/smoke_vllm_lens_*.json
 !results/vector_love_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
 !results/vector_all_caps_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
 *.log
+
+# auto_sweep.py runtime artifacts
+scripts/results-*/
+scripts/debug-*/

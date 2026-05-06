@@ -12,7 +12,20 @@ Tested with vllm-lens 1.1.0 + vLLM 0.20.x. **Note:** vllm-lens 1.1.0 requires
 `vllm>=0.16.0` — if you keep the `vllm==0.11.0` pin from this recipe (chosen
 for `compressed-tensors==0.11.0` compatibility during the original ablation),
 you'll need vllm-lens 1.0.0 or to upgrade vLLM. The 2026-05-03 canonical run
-used vLLM 0.20.x + vllm-lens 1.1.0.
+used **vLLM 0.20.0** + vllm-lens 1.1.0.
+
+**Pin vLLM to 0.20.0, not 0.20.x.** vLLM 0.20.1 (released 2026-05-04) added a
+hard dep on `deep_gemm` for FP8 kernels that breaks vllm-lens 1.1.0 paths. On
+2026-05-06 a `vllm==0.20.*` pin silently resolved to 0.20.1 and crashed the
+sweep at engine init: `RuntimeError: DeepGEMM backend is not available or
+outdated`. Use `vllm==0.20.0`.
+
+**Pin the RunPod image too.** The same 2026-05-06 run also tried
+`runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2204` (CUDA 12.9). On US-NC-1 the
+host's NVIDIA driver was older than what torch 2.8 / cu1290 requires, crashing
+all worker procs with `RuntimeError: The NVIDIA driver on your system is too
+old (found version 12090)`. Stay on
+`runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` (CUDA 12.8.1).
 
 ## Pod config that works
 
