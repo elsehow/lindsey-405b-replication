@@ -27,6 +27,52 @@ all worker procs with `RuntimeError: The NVIDIA driver on your system is too
 old (found version 12090)`. Stay on
 `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` (CUDA 12.8.1).
 
+**Driver-version check before deploy.** Different physical hosts within the
+same DC can have different NVIDIA drivers. The PyPI torch 2.8 cu128 wheel
+needs CUDA driver ≥ 12.8.1 (= driver-version 12081). Driver 12080 fails with
+`Cannot re-initialize CUDA in forked subprocess` (the spawn-method workaround
+just turns this into the underlying `too old` message). On 2026-05-06 we
+landed on a host with driver 12080 three times in a row at AP-JP-1. Probe
+before doing anything else:
+
+```bash
+python3 -c "import ctypes; lib=ctypes.CDLL('libcuda.so'); v=ctypes.c_int(); lib.cuDriverGetVersion(ctypes.byref(v)); print(v.value)"
+# 12081 or higher → proceed; lower → tear down, redeploy
+```
+
+`auto_sweep.py` does this automatically as a pre-flight check; rejecting a bad
+host costs ~$0.05 of pod time vs $3+ if you let it fail at vLLM model load.
+
+**Use uv when the image's Python is < 3.12.** vllm-lens 1.1.0 requires Python
+3.12, but RunPod's `runpod/pytorch:0.7.0-*` family ships only 3.11. uv
+sidesteps this by downloading its own Python 3.12. It also sidesteps Ubuntu
+24.04's PEP-668 `externally-managed-environment` block (cu1281 image) without
+needing `--break-system-packages`. Single command:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH=$HOME/.local/bin:$PATH
+uv venv /workspace/venv --python 3.12 --seed
+uv pip install --python /workspace/venv/bin/python \
+    "vllm==0.20.0" "vllm-lens==1.1.0" "anthropic>=0.40" "pydantic>=2" \
+    "huggingface_hub[cli,hf_transfer]"
+```
+
+`scripts/setup_pod_manual.sh` wraps this for hand-provisioned pods.
+
+**Don't `--reinstall torch` in isolation.** If you're tempted to reinstall
+just torch (e.g. to fix a partial extraction), don't — torch's wheel is tightly
+coupled with `nvidia-nccl-cu12`, `nvidia-cuda-runtime-cu12`, etc. Reinstalling
+torch alone produces `undefined symbol: ncclDevCommDestroy` from the leftover
+NCCL. Either `--reinstall vllm==0.20.0` (which pulls all of torch + nvidia-*
+together) or nuke the venv and start over. Observed 2026-05-06.
+
+**Mark the spawn worker method.** vLLM v1's default fork-based worker spawn
+breaks `torch.cuda.init()` when the parent has already touched CUDA. Set
+`VLLM_WORKER_MULTIPROC_METHOD=spawn` before launching the sweep — also useful
+because it surfaces the underlying driver-mismatch error as a real error rather
+than a misleading fork-CUDA error.
+
 ## Pod config that works
 
 - **GPU**: 8× H100 80GB SXM5 (NVLink full mesh, NV18) — enables tensor parallel

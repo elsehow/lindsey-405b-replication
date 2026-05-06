@@ -255,6 +255,101 @@ def scp_to(host, port, local, remote, timeout=120):
     )
 
 
+class DriverMismatch(Exception):
+    """Raised when a pod's NVIDIA driver is too old for the image's torch.
+    Pipeline catches this without consuming a MAX_PIPELINE_ATTEMPTS slot —
+    it's a cheap rejection of an unsuitable host, not a real run."""
+
+
+MIN_CUDA_DRIVER_VERSION = 12081  # 12.8.1 — what PyPI torch 2.8 cu128 wheel needs
+
+def check_driver_compat(host, port):
+    """Pre-flight: query libcuda's driver version directly via ctypes. Reject anything below
+    MIN_CUDA_DRIVER_VERSION. PyPI's torch 2.8 cu128 wheel (what uv pulls for vllm 0.20.0) needs
+    CUDA driver 12081+. Host driver 12080 (CUDA 12.8.0) crashes vLLM workers with 'too old'.
+
+    Earlier: tried 'python3 -c \"import torch; torch.cuda.init()\"' but image's pre-installed
+    torch (cu1281) was strangely tolerant of driver 12080, while PyPI's cu128 wheel was strict.
+    Direct ctypes query is the truth. Costs ~$0.05 of pod time on a bad host."""
+    r = ssh_exec(host, port,
+        "python3 -c \"import ctypes; "
+        "lib = ctypes.CDLL('libcuda.so'); "
+        "v = ctypes.c_int(); lib.cuDriverGetVersion(ctypes.byref(v)); "
+        "print('DRIVER', v.value)\" 2>&1 || true")
+    out = (r.stdout + r.stderr).strip()
+    log("driver pre-flight: " + out[:300])
+    # Parse "DRIVER 12080"
+    driver_ver = None
+    for line in out.splitlines():
+        if line.startswith("DRIVER "):
+            try:
+                driver_ver = int(line.split()[1])
+                break
+            except (ValueError, IndexError):
+                pass
+    if driver_ver is None:
+        raise RuntimeError("driver pre-flight: could not parse driver version from: " + out[:200])
+    if driver_ver < MIN_CUDA_DRIVER_VERSION:
+        raise DriverMismatch(
+            "pod's CUDA driver {} < required {} (PyPI torch 2.8 cu128 needs ≥{}); will redeploy elsewhere".format(
+                driver_ver, MIN_CUDA_DRIVER_VERSION, MIN_CUDA_DRIVER_VERSION))
+    log("driver pre-flight passed: cuDriverGetVersion={}".format(driver_ver))
+
+
+def setup_pod(host, port):
+    """Install everything inside a uv-managed venv at /workspace/venv.
+    Why uv (not pip --break-system-packages):
+      cu1281 image is Ubuntu 24.04 with PEP 668 enforcement. uv sidesteps the
+      mess entirely and gives us a clean isolated env — same approach the
+      May-3 canonical run used (`uv add vllm-lens` per runpod-vllm-fp8.md)."""
+
+    # 0. driver pre-flight — abort cheap if driver mismatch
+    check_driver_compat(host, port)
+
+    # 1. install uv (single binary, no pip needed)
+    log("installing uv...")
+    r = ssh_exec(host, port,
+        "curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -5",
+        timeout=120)
+    if r.returncode != 0:
+        log("uv install failed: " + r.stderr[-500:])
+        raise RuntimeError("uv install failed")
+
+    # 2. create venv and install our pinned stack
+    log("creating venv + installing vllm==0.20.0 + vllm-lens==1.1.0 + anthropic + pydantic...")
+    install_cmd = (
+        "set -o pipefail; "
+        "export PATH=$HOME/.local/bin:$PATH && "
+        "uv venv /workspace/venv --python 3.12 --seed && "
+        "uv pip install --python /workspace/venv/bin/python --no-cache-dir "
+        "  'vllm==0.20.0' 'vllm-lens==1.1.0' 'anthropic>=0.40' 'pydantic>=2' "
+        "  'huggingface_hub[cli,hf_transfer]' "
+        "  2>&1 | tail -15"
+    )
+    r = ssh_exec(host, port, install_cmd, timeout=900)
+    log("uv install rc=" + str(r.returncode))
+    if r.returncode != 0:
+        log("uv install stdout: " + r.stdout[-1500:])
+        log("uv install stderr: " + r.stderr[-500:])
+        raise RuntimeError("uv install failed")
+
+    # 3. verify install actually landed (paranoia after this morning's silent-fail bug)
+    r = ssh_exec(host, port,
+        "/workspace/venv/bin/python -c \"import vllm, vllm_lens, anthropic; "
+        "print(vllm.__version__, vllm_lens.__version__, anthropic.__version__)\"",
+        timeout=60)
+    log("verify versions: " + r.stdout.strip())
+    if r.returncode != 0 or "0.20.0" not in r.stdout:
+        raise RuntimeError("install verification failed: " + r.stdout + r.stderr)
+
+    # 4. upload sweep scripts
+    log("uploading lindsey_full_sweep.py + judge_lindsey_batch.py...")
+    for f in ("lindsey_full_sweep.py", "judge_lindsey_batch.py"):
+        r = scp_to(host, port, str(REPO / f), "/workspace/" + f)
+        if r.returncode != 0:
+            raise RuntimeError("scp failed for " + f + ": " + r.stderr)
+
+
 def maybe_download_weights(host, port, target):
     """If weights aren't already on /workspace, fresh-download from HF (~6 min on US/EU pods)."""
     r = ssh_exec(host, port,
@@ -265,17 +360,16 @@ def maybe_download_weights(host, port, target):
         return
 
     notify("Fresh download — ~6 min for 410 GB FP8 weights")
-    log("installing huggingface_hub[cli,hf_transfer] + downloading weights...")
+    log("downloading weights via venv's hf cli...")
     cmd = (
-        "pip install -q --no-cache-dir 'huggingface_hub[cli,hf_transfer]' && "
         "mkdir -p /workspace/hf-cache && "
         "export HF_HUB_ENABLE_HF_TRANSFER=1 && "
-        "hf download "
+        "/workspace/venv/bin/hf download "
         "  RedHatAI/Meta-Llama-3.1-405B-Instruct-FP8-dynamic "
         "  --local-dir /workspace/hf-cache/Llama-3.1-405B-Instruct-FP8-dynamic "
         "  --max-workers 8"
     )
-    r = ssh_exec(host, port, cmd, timeout=900)  # 15 min cap
+    r = ssh_exec(host, port, cmd, timeout=1500)  # 25 min cap (slow DCs)
     log("download rc=" + str(r.returncode))
     if r.returncode != 0:
         log("download stderr: " + r.stderr[-500:])
@@ -286,26 +380,6 @@ def maybe_download_weights(host, port, target):
     if n < 86:
         raise RuntimeError("only got {} shards after download".format(n))
     log("download done, {} shards".format(n))
-
-
-def setup_pod(host, port):
-    log("installing vllm==0.20.0 + vllm-lens==1.1.0 + anthropic + pydantic...")
-    # vllm pinned to 0.20.0 (May-3 canonical-run version). 0.20.1 (released 2026-05-04) added
-    # a hard FP8 dep on deep_gemm that breaks vllm-lens 1.1.0 paths.
-    r = ssh_exec(host, port,
-        "pip install --no-cache-dir 'vllm==0.20.0' 'vllm-lens==1.1.0' 'anthropic>=0.40' 'pydantic>=2' 2>&1 | tail -3",
-        timeout=900)
-    log("pip install rc=" + str(r.returncode))
-    if r.returncode != 0:
-        log("pip stdout: " + r.stdout[-1500:])
-        log("pip stderr: " + r.stderr[-500:])
-        raise RuntimeError("pip install failed")
-
-    log("uploading lindsey_full_sweep.py + judge_lindsey_batch.py...")
-    for f in ("lindsey_full_sweep.py", "judge_lindsey_batch.py"):
-        r = scp_to(host, port, str(REPO / f), "/workspace/" + f)
-        if r.returncode != 0:
-            raise RuntimeError("scp failed for " + f + ": " + r.stderr)
 
 
 def run_sweep(host, port, target):
@@ -320,7 +394,7 @@ def run_sweep(host, port, target):
         "CONDITIONS=lindsey "
         "OUT_DIR=/workspace/sweep-results "
         "VLLM_ALLREDUCE_USE_SYMM_MEM=0 "
-        "python lindsey_full_sweep.py 2>&1 | tee /workspace/sweep-results/sweep.log"
+        "/workspace/venv/bin/python lindsey_full_sweep.py 2>&1 | tee /workspace/sweep-results/sweep.log"
     )
     r = ssh_exec(host, port, cmd, timeout=2700)  # 45 min cap
     log("sweep rc=" + str(r.returncode))
@@ -352,7 +426,7 @@ def run_judge(host, port):
         "set -o pipefail; "
         "cd /workspace/sweep-results && "
         "ANTHROPIC_API_KEY=" + ANTHROPIC_KEY + " "
-        "python /workspace/judge_lindsey_batch.py 2>&1 | tee judge.log"
+        "/workspace/venv/bin/python /workspace/judge_lindsey_batch.py 2>&1 | tee judge.log"
     )
     r = ssh_exec(host, port, cmd, timeout=900)
     log("judge rc=" + str(r.returncode))
@@ -385,12 +459,14 @@ def pull_results(host, port, label):
 
 
 def run_pipeline(target):
+    """Returns 'ok' on success, 'fail' on real failure, 'skip' on pre-flight mismatch
+    (skip = cheap rejection, doesn't burn an attempt slot)."""
     pod_id = None
     try:
         pod_id = deploy(target)
         if not pod_id:
             notify("deploy failed; will keep polling")
-            return False
+            return "fail"
         notify("Deployed " + target["label"] + " — pod " + pod_id + ", waiting for SSH")
         host, port = wait_for_ssh(pod_id)
         notify("SSH up — installing deps")
@@ -404,12 +480,16 @@ def run_pipeline(target):
         out_dir = pull_results(host, port, target["label"])
         notify("DONE — results in " + out_dir.name)
         log("SUCCESS — results at " + str(out_dir))
-        return True
+        return "ok"
+    except DriverMismatch as e:
+        log("DRIVER MISMATCH (cheap reject, won't count toward attempts): " + str(e))
+        notify("Pod skipped — driver mismatch")
+        return "skip"
     except Exception as e:
         log("PIPELINE FAILED: " + repr(e))
         log(traceback.format_exc())
         notify("Pipeline failed: " + str(e)[:80])
-        return False
+        return "fail"
     finally:
         if pod_id:
             teardown(pod_id)
@@ -429,26 +509,37 @@ def main():
 
     pipeline_attempts = 0
 
+    skip_count = 0  # cheap pre-flight rejections (not real attempts)
+    MAX_SKIPS = 8    # cap to avoid infinite re-poll loop on a stuck driver-mismatch DC
+
     while True:
         try:
             target = poll_for_slot()
             if target:
-                pipeline_attempts += 1
-                log("FOUND SLOT [attempt {}/{}]: {} at ${}/hr (volume={})".format(
-                    pipeline_attempts, MAX_PIPELINE_ATTEMPTS,
-                    target["label"], target["price"],
-                    target["volume_id"] or "fresh"))
-                ok = run_pipeline(target)
-                if ok:
+                log("FOUND SLOT: {} at ${}/hr (volume={})".format(
+                    target["label"], target["price"], target["volume_id"] or "fresh"))
+                result = run_pipeline(target)
+                if result == "ok":
                     log("SUCCESS — exiting")
                     sys.exit(0)
+                if result == "skip":
+                    skip_count += 1
+                    log("driver-mismatch skip {}/{}; sleeping 90s before re-poll".format(
+                        skip_count, MAX_SKIPS))
+                    if skip_count >= MAX_SKIPS:
+                        log("Hit MAX_SKIPS={} — every available host has wrong driver, giving up".format(MAX_SKIPS))
+                        notify("Auto-poller giving up — every host had driver mismatch")
+                        sys.exit(1)
+                    time.sleep(90)
+                    continue
+                # real failure
+                pipeline_attempts += 1
                 if pipeline_attempts >= MAX_PIPELINE_ATTEMPTS:
                     log("Hit MAX_PIPELINE_ATTEMPTS={}, giving up".format(MAX_PIPELINE_ATTEMPTS))
                     notify("Auto-poller giving up after {} failed attempts".format(MAX_PIPELINE_ATTEMPTS))
                     sys.exit(1)
                 log("Pipeline failed; will keep polling for next slot ({}/{} attempts used)".format(
                     pipeline_attempts, MAX_PIPELINE_ATTEMPTS))
-                # Wait a bit before next poll so we don't immediately re-grab a stuck DC
                 time.sleep(120)
                 continue
             log("no slot; sleeping 60s")
