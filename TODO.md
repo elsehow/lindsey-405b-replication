@@ -43,7 +43,17 @@ Cost ballpark: ~$10–20 total, ~15 min wall-clock per layer (Lindsey scaffold o
 
 **Decision criterion** (same as step 1): does any (layer, magnitude) cell achieve the threshold? If yes at any layer, the methodological reading wins. If no at any layer, the trade-off is robust to layer choice and the mechanistic reading is on solid footing.
 
-## 3. (Open) Cross-family extension
+## 3. Per-layer crossover chart
+
+Once steps 1 and 2 are judged, build a **stacked figure** with one panel per layer (84, 70, 90, 100). Each panel shows the same identification × coherence crossover plot as the LW post's lead chart (mag on x, both metrics on y, two curves: identifies + coherent). The aggregate visual: where does the crossover sit at each depth?
+
+Hypothesis the chart should test: **does the crossover migrate** with depth (consistent with introspection-related processing being layer-localized in Llama at a different depth than Anthropic's models), or does it stay parked around mag~11 across layers (consistent with no introspection-relevant computation at any depth — the crossover is just a generic concept-injection artifact)?
+
+If the chart shows depth-invariance, that's a strong second-order finding to add to the post. If the chart shows depth-dependent drift, the negative result becomes more interesting (Llama's introspection-correlated layer is somewhere we tested but at a different mag, or somewhere we didn't test).
+
+Mirrors `make_figures.py`'s structural-finding chart but as a `(rows, 1)` grid panel layout. Use the same id/coh metric definitions for consistency with the lead chart.
+
+## 4. (Open) Cross-family extension
 
 Repeat the canonical sweep on a different open-weights post-trained model at comparable scale. The cleanest options:
 

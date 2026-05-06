@@ -28,3 +28,4 @@ results/smoke_vllm_lens_*.json
 # auto_sweep.py runtime artifacts
 scripts/results-*/
 scripts/debug-*/
+.venv-judge/
