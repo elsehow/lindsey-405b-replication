@@ -14,6 +14,12 @@ follow-up.
 Usage:
     python make_figures.py
     python make_figures.py path/to/lindsey_full_*.judged.json
+    python make_figures.py --layer-stack DIR1 DIR2 ...   # per-layer crossover stack
+
+For --layer-stack, pass any number of result-dirs each containing one
+lindsey_full_*.judged.json. The script extracts the layer number from each
+file's "layer" field and stacks them into one figure (one panel per layer,
+in depth order).
 """
 import glob
 import json
@@ -33,6 +39,21 @@ def load_aggregates(path):
     for label in by_label:
         by_label[label].sort(key=lambda x: x[0])
     return by_label, d
+
+
+def merge_aggregates(paths):
+    """Combine multiple judged JSONs into one by_label dict, merging by
+    (label, magnitude). Later paths override earlier paths at the same key.
+    Useful for stitching the dense layer-84 grid into the canonical run."""
+    merged = defaultdict(dict)  # label -> mag -> rates
+    for p in paths:
+        d = json.load(open(p))
+        for a in d["aggregates"]:
+            merged[a["label"]][a["magnitude"]] = a["rates"]
+    by_label = defaultdict(list)
+    for label, mag_map in merged.items():
+        by_label[label] = sorted(mag_map.items(), key=lambda x: x[0])
+    return by_label
 
 
 def line_kwargs(metric):
@@ -83,24 +104,32 @@ def plot_panel(ax, cells, *, title, metrics, show_xlabel=True, show_ylabel=True,
 
 
 def figure_structural_finding(by_label, out_path):
-    """Single-panel: lindsey/all_caps, identifies vs coherent — the post's lead chart."""
-    cells = by_label["lindsey_all_caps"]
-    fig, ax = plt.subplots(figsize=(8.5, 4.6), dpi=144)
-    plot_panel(
-        ax, cells,
-        title="Identification and coherence trade off — lindsey scaffold, all_caps vector",
-        metrics=["identifies", "coherent"],
-        show_legend=True,
-        annotate_crossover=True,
-    )
-    ax.text(
-        0.5, 0.50,
-        "no magnitude where both ≥ 0.5",
-        ha="center", va="center",
-        transform=ax.transAxes,
-        fontsize=10, color="#555",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
-                  edgecolor="#ccc", alpha=0.9),
+    """Two-panel stacked: lindsey/all_caps (top) + lindsey/love (bottom),
+    identifies vs coherent — the post's lead chart.
+
+    Same x-axis (magnitude) on both panels so the curves are visually matched.
+    Panels share the y-axis too. Annotate the empty top-right region to flag
+    the absence of any cell where both ≥ 0.5."""
+    fig, axes = plt.subplots(2, 1, figsize=(8.5, 7.0), dpi=144,
+                             sharex=True, sharey=True)
+    panels = [
+        ("lindsey_all_caps", axes[0], "all_caps vector"),
+        ("lindsey_love",     axes[1], "love vector"),
+    ]
+    for label, ax, title in panels:
+        cells = by_label.get(label, [])
+        plot_panel(
+            ax, cells,
+            title=title,
+            metrics=["identifies", "coherent"],
+            show_xlabel=(ax is axes[1]),
+            show_ylabel=True,
+            show_legend=(ax is axes[0]),
+            annotate_crossover=True,
+        )
+    fig.suptitle(
+        "Identification × coherence trade-off (Llama-3.1-405B-Instruct, layer 84, lindsey scaffold)",
+        fontsize=12, y=0.995,
     )
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
@@ -141,7 +170,93 @@ def figure_all_conditions(by_label, out_path):
     print(f"wrote {out_path}")
 
 
+def figure_layer_stack(judged_paths, out_path, *, label="lindsey_all_caps"):
+    """Stacked panels (rows × 1), one per layer, showing id × coh as crossing
+    line plots (matches the lead structural_finding.png style).
+
+    Layer order: shallowest at top, deepest at bottom — standard transformer
+    convention (layer 0 = input embedding, layer N = final output). Reading
+    top-to-bottom traces the signal flowing through the network.
+
+    If multiple judged JSONs share the same `layer`, their aggregates are
+    merged by (label, magnitude) — useful for combining the May-3 canonical
+    grid [5, 10, 12, 15, 18] with the May-6 dense grid [10, 10.5, 11, 11.5, 12]
+    at layer 84."""
+    by_layer = defaultdict(lambda: defaultdict(dict))  # layer -> label -> mag -> rates
+    for p in judged_paths:
+        d = json.load(open(p))
+        layer = d.get("layer")
+        if layer is None:
+            sys.exit(f"ERROR: no 'layer' field in {p}")
+        for a in d["aggregates"]:
+            # Later files in the iteration override earlier ones at the same (layer,label,mag).
+            by_layer[int(layer)][a["label"]][a["magnitude"]] = a["rates"]
+
+    panels = []
+    for layer, lab_map in by_layer.items():
+        cells = sorted(lab_map.get(label, {}).items(), key=lambda x: x[0])
+        panels.append((layer, cells, None))
+    # Shallowest at top, deepest at bottom (standard transformer convention).
+    panels.sort(key=lambda x: x[0])
+
+    n = len(panels)
+    fig, axes = plt.subplots(n, 1, figsize=(8.5, 2.6 * n + 0.6), dpi=144,
+                             sharex=True, sharey=True)
+    if n == 1:
+        axes = [axes]
+
+    for i, (layer, cells, _) in enumerate(panels):
+        ax = axes[i]
+        plot_panel(
+            ax, cells,
+            title=f"Layer {layer}",
+            metrics=["identifies", "coherent"],
+            show_xlabel=(i == n - 1),  # only on bottom panel
+            show_ylabel=True,
+            show_legend=(i == 0),       # only on top panel
+            annotate_crossover=True,
+        )
+
+    fig.suptitle(
+        f"Identification × coherence by layer — {label}\n"
+        "(Llama-3.1-405B-Instruct FP8, lindsey scaffold, dense magnitudes)",
+        fontsize=12, y=0.995,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out_path}")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--layer-stack":
+        judged = []
+        for arg in sys.argv[2:]:
+            ap = Path(arg)
+            if ap.is_dir():
+                hits = list(ap.glob("lindsey_full_*.judged.json"))
+                if not hits:
+                    sys.exit(f"no lindsey_full_*.judged.json in {ap}")
+                judged.append(hits[0])
+            elif ap.is_file():
+                judged.append(ap)
+            else:
+                sys.exit(f"not found: {arg}")
+        Path("figures").mkdir(exist_ok=True)
+        figure_layer_stack(judged, "figures/layer_stack_all_caps.png", label="lindsey_all_caps")
+        figure_layer_stack(judged, "figures/layer_stack_love.png", label="lindsey_love")
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--merge":
+        # Multiple judged JSONs merged by (label, mag). Lead chart only.
+        paths = sys.argv[2:]
+        if not paths:
+            sys.exit("ERROR: --merge needs ≥1 judged JSON path")
+        by_label = merge_aggregates(paths)
+        Path("figures").mkdir(exist_ok=True)
+        figure_structural_finding(by_label, "figures/structural_finding.png")
+        return
+
     if len(sys.argv) > 1:
         path = sys.argv[1]
     else:

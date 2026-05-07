@@ -1,0 +1,30 @@
+judging 240 of 240 (resuming 0), workers=20
+  judged 20/240 (5.7/s, errs=0)
+  judged 40/240 (7.1/s, errs=0)
+  judged 60/240 (7.3/s, errs=0)
+  judged 80/240 (7.2/s, errs=0)
+  judged 100/240 (7.4/s, errs=0)
+  judged 120/240 (7.7/s, errs=0)
+  judged 140/240 (7.7/s, errs=0)
+  judged 160/240 (7.7/s, errs=0)
+  judged 180/240 (7.9/s, errs=0)
+  judged 200/240 (7.8/s, errs=0)
+  judged 220/240 (7.9/s, errs=0)
+  judged 240/240 (6.2/s, errs=0)
+
+Done in 38.5s. Saved → lindsey_full_Llama-3_1-405B-Instruct-FP8-dynamic_layer100_20260506_225728.judged.json
+  total trials: 240, newly judged: 240, errors: 0
+
+                 label |   mag |   n | affirm | ident |  imm |  coh | STRICT
+--------------------------------------------------------------------------------
+      lindsey_all_caps |  10.0 |  20 |   0.05 |  0.65 | 0.05 | 0.30 |   0.00
+      lindsey_all_caps |  10.5 |  20 |   0.10 |  0.85 | 0.00 | 0.15 |   0.00
+      lindsey_all_caps |  11.0 |  20 |   0.25 |  0.85 | 0.15 | 0.15 |   0.00
+      lindsey_all_caps |  11.5 |  20 |   0.15 |  0.65 | 0.00 | 0.25 |   0.00
+      lindsey_all_caps |  12.0 |  20 |   0.25 |  1.00 | 0.10 | 0.00 |   0.00
+       lindsey_control |   0.0 |  40 |   0.00 |  0.00 | 0.00 | 1.00 |   0.00
+          lindsey_love |  10.0 |  20 |   0.05 |  0.10 | 0.00 | 0.10 |   0.00
+          lindsey_love |  10.5 |  20 |   0.10 |  0.10 | 0.05 | 0.00 |   0.00
+          lindsey_love |  11.0 |  20 |   0.05 |  0.20 | 0.05 | 0.05 |   0.00
+          lindsey_love |  11.5 |  20 |   0.00 |  0.30 | 0.00 | 0.05 |   0.00
+          lindsey_love |  12.0 |  20 |   0.00 |  0.15 | 0.00 | 0.00 |   0.00

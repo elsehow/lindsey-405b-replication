@@ -15,7 +15,8 @@ venv/
 .idea/
 .DS_Store
 
-# Run-time outputs (the canonical run is committed under results/; new runs are local)
+# Run-time outputs — committed runs live under results/, others stay local.
+# New runs go in dated subdirs (results/YYYY-MM-DD-<label>/) which we whitelist below.
 results/lindsey_full_*.json
 results/vector_*.pt
 results/smoke_vllm_lens_*.json
@@ -23,7 +24,17 @@ results/smoke_vllm_lens_*.json
 !results/lindsey_full_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.judged.json
 !results/vector_love_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
 !results/vector_all_caps_Llama-3_1-405B-Instruct-FP8-dynamic_layer84_20260503_014510.pt
+# Allow committed dated subdirs (May-6 layer sweep + dense magnitudes)
+!results/2026-05-06-layer70/
+!results/2026-05-06-layer70/**
+!results/2026-05-06-layer84/
+!results/2026-05-06-layer84/**
+!results/2026-05-06-layer90/
+!results/2026-05-06-layer90/**
+!results/2026-05-06-layer100/
+!results/2026-05-06-layer100/**
 *.log
+!results/**/*.log
 
 # auto_sweep.py runtime artifacts
 scripts/results-*/
